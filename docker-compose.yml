@@ -1,0 +1,11 @@
+services:
+  web:
+    build: .
+    ports:
+      - 3000:3000
+    volumes:
+      - ./upload:/app/upload
+    network_mode: host
+
+volumes:
+  upload:
