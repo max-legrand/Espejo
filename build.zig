@@ -36,7 +36,7 @@ pub fn build(b: *std.Build) void {
     // This creates another `std.Build.Step.Compile`, but this one builds an executable
     // rather than a static library.
     const exe = b.addExecutable(.{
-        .name = "scratchpad",
+        .name = "espejo",
         .root_module = exe_mod,
     });
 
@@ -82,34 +82,35 @@ pub fn build(b: *std.Build) void {
 
     // Check step for ZLS
     const exe_check = b.addExecutable(.{
-        .name = "scratchpad-check",
+        .name = "espejo-check",
         .root_module = exe_mod,
     });
     const check = b.step("check", "Check if the program compiles");
     check.dependOn(&exe_check.step);
 
-    const wasm_target = b.resolveTargetQuery(.{
-        .cpu_arch = .wasm32,
-        .os_tag = .freestanding,
-    });
-
-    const wasm_module = b.createModule(.{
-        .root_source_file = b.path("src/wasm.zig"),
-        .target = wasm_target,
-        .optimize = optimize,
-    });
-    const wasm = b.addExecutable(.{
-        .name = "wasm",
-        .root_module = wasm_module,
-    });
-    wasm.entry = .disabled;
-    wasm.rdynamic = true;
-
-    const wasm_check = b.addExecutable(.{
-        .name = "scratchpad-check",
-        .root_module = wasm_module,
-    });
-    check.dependOn(&wasm_check.step);
-
-    b.installArtifact(wasm);
+    // const wasm_target = b.resolveTargetQuery(.{
+    //     .cpu_arch = .wasm32,
+    //     .os_tag = .freestanding,
+    // });
+    //
+    // const wasm_module = b.createModule(.{
+    //     .root_source_file = b.path("src/wasm.zig"),
+    //     .target = wasm_target,
+    //     .optimize = optimize,
+    // });
+    //
+    // const wasm = b.addExecutable(.{
+    //     .name = "wasm",
+    //     .root_module = wasm_module,
+    // });
+    // wasm.entry = .disabled;
+    // wasm.rdynamic = true;
+    //
+    // const wasm_check = b.addExecutable(.{
+    //     .name = "espejo-wasm-check",
+    //     .root_module = wasm_module,
+    // });
+    // check.dependOn(&wasm_check.step);
+    //
+    // b.installArtifact(wasm);
 }

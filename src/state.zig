@@ -42,6 +42,7 @@ pub const State = struct {
     current_upload: ?*Upload = null,
     ws_connections: std.ArrayList(*ws.Client),
     use_auth: bool,
+    clipboard: []const u8,
 
     pub const WebsocketHandler = ws.Client;
 
@@ -55,11 +56,19 @@ pub const State = struct {
     }
 
     pub fn init(allocator: std.mem.Allocator) Self {
+        const use_auth = shouldUseAuth(allocator);
+        if (use_auth) {
+            zlog.info("Using auth", .{});
+        }
+
+        const clipboard = allocator.dupe(u8, "Hello from the server!") catch @panic("Failed to allocate clipboard");
         var value = Self{
             .file_cache = std.StringHashMap(CachedFile).init(allocator),
             .allocator = allocator,
             .ws_connections = std.ArrayList(*ws.Client).init(allocator),
             .use_auth = shouldUseAuth(allocator),
+            // Initialize clipboard
+            .clipboard = clipboard,
         };
         const cwd = std.fs.cwd();
         const metadata = cwd.openFile("upload/metadata.json", .{}) catch {
@@ -103,8 +112,6 @@ pub const State = struct {
 
     pub fn stopWS(self: *Self) void {
         for (self.ws_connections.items) |client| {
-            // client.shutdown();
-            // client.deinit();
             self.allocator.destroy(client);
         }
     }
@@ -121,6 +128,12 @@ pub const State = struct {
             const user = envMap.get("SP_USER") orelse return error.NoUser;
             const password = envMap.get("SP_PASSWORD") orelse return error.NoPassword;
 
+            zlog.debug("Requesting {} - {s}", .{ req.method, req.url.path });
+            var headers = req.headers.iterator();
+            while (headers.next()) |header| {
+                zlog.debug("{s}: {s}", .{ header.key, header.value });
+            }
+
             if (req.headers.get("authorization")) |auth| {
                 const data = auth[6..];
                 const expected = try std.fmt.allocPrint(res.arena, "{s}:{s}", .{ user, password });
@@ -131,9 +144,37 @@ pub const State = struct {
                     try res.write();
                     return;
                 }
+                const auth_token = std.base64.standard.Encoder.calcSize(expected.len);
+                const token = try res.arena.alloc(u8, auth_token);
+                _ = std.base64.standard.Encoder.encode(token, expected);
+
+                const domain = if (envMap.get("SP_PROD")) |d| d else "localhost";
+                try res.setCookie("auth", token, .{
+                    .max_age = @as(?i32, 31536000),
+                    .http_only = true,
+                    .secure = true,
+                    .same_site = .lax,
+                    .domain = domain,
+                });
+            } else if (req.cookies().get("auth")) |cookie| {
+                // Validate the token
+                const expected = try std.fmt.allocPrint(res.arena, "{s}:{s}", .{ user, password });
+                const expected_b64 = std.base64.standard.Encoder.calcSize(expected.len);
+                const expected_token = try res.arena.alloc(u8, expected_b64);
+                _ = std.base64.standard.Encoder.encode(expected_token, expected);
+
+                if (!std.mem.eql(u8, cookie, expected_token)) {
+                    res.status = 403;
+                    try res.write();
+                    return;
+                }
+            } else if (std.mem.indexOf(u8, req.url.path, "/assets/")) |_| {
+                res.status = 401;
+                try res.write();
+                return;
             } else {
                 res.status = 401;
-                res.headers.add("WWW-Authenticate", "Basic realm=\"Scratchpad\"");
+                res.headers.add("WWW-Authenticate", "Basic realm=\"Espejo\"");
                 try res.write();
                 return;
             }
@@ -283,10 +324,6 @@ pub const State = struct {
         var compressed_data: ?[]u8 = null;
         if (file_size > 1024 and shouldCompress(path, actual_content_type)) { // Only compress files > 1KB
             compressed_data = self.compressData(data) catch null;
-            // if (compressed_data) |compressed| {
-            //     const compression_ratio = @as(f32, @floatFromInt(data.len)) / @as(f32, @floatFromInt(compressed.len));
-            //     zlog.info("Compressed {s}: {d} -> {d} bytes (ratio: {d:.2}x)", .{ path, data.len, compressed.len, compression_ratio });
-            // }
         }
 
         // Create cache entry
@@ -341,4 +378,15 @@ pub fn setCacheHeaders(res: *httpz.Response, max_age_seconds: u32) !void {
         .{max_age_seconds},
     );
     res.header("Cache-Control", cache_control);
+}
+
+pub fn clearUploadDir(allocator: std.mem.Allocator) !void {
+    const cwd = std.fs.cwd();
+    const upload = try cwd.openDir("upload", .{
+        .iterate = true,
+    });
+    var walker = try upload.walk(allocator);
+    while (try walker.next()) |entry| {
+        try upload.deleteFile(entry.path);
+    }
 }

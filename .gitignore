@@ -1,6 +1,6 @@
 web/node_modules
-web/dist
 
+upload/
 .zig-cache/
 .DS_Store
 zig-out/

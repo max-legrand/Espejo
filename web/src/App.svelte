@@ -8,23 +8,25 @@
     let currentUpload = $state(null);
     let downloadUrl = $state('');
 
-    // WebSocket setup
     const wsUrl = '/ws';
     const client = new WebSocketClient(wsUrl);
-    client.onOpen(() => {
-        client.send('Hello from the client! 👋');
-    });
+    client.onOpen(() => {});
     client.onMessage((data: string) => {
-        console.log('Received message from server:', data);
-        textContent = data;
+        const response = JSON.parse(data);
+        if (response.action === 'setClipboard') {
+            textContent = response.data;
+        } else if (response.action === 'clearUpload') {
+            currentUpload = null;
+        } else if (response.action === 'uploadFile') {
+            currentUpload = response.data;
+            downloadUrl = `/download/${currentUpload}`;
+        }
     });
     client.connect();
 
-    // Debounce text changes
     const debouncedTextChange = debounce((text) => {
-        // Send text to server or save it
-        client.send(text);
-    }, 500); // 0.5 seconds debounce
+        client.send(JSON.stringify({ action: 'setClipboard', data: text }));
+    }, 500);
 
     function handleTextChange(event: Event) {
         if (event.target) {
@@ -38,6 +40,11 @@
         await navigator.clipboard.writeText(textContent);
     }
 
+    async function getContent() {
+        const response = await fetch('/getContent');
+        textContent = await response.text();
+    }
+
     const handleFileUpload = async (event: Event) => {
         const inputElement = event.target as HTMLInputElement;
         if (inputElement.files && inputElement.files.length > 0) {
@@ -48,11 +55,13 @@
                 method: 'POST',
                 body: formData,
             });
-
-            const result = await response.json();
-            if (response.ok && result.status === 'success') {
-                await getUpload();
-            }
+            if (!response.ok) return;
+            client.send(
+                JSON.stringify({
+                    action: 'uploadFile',
+                    data: inputElement.files[0].name,
+                })
+            );
         }
     };
 
@@ -79,18 +88,25 @@
         window.addEventListener('resize', checkMobile);
 
         await getUpload();
+        await getContent();
 
         return new Promise(() => {
             window.removeEventListener('resize', checkMobile);
         });
     });
+
+    async function clearUpload() {
+        const response = await fetch('/clearUpload');
+        if (!response.ok) return;
+        client.send(JSON.stringify({ action: 'clearUpload', data: null }));
+    }
 </script>
 
 <main class="w-full text-white py-6">
     {#if !isMobile}
         <!-- Desktop Layout -->
         <div class="pl-4">
-            <h2 class="text-2xl font-bold mb-4">Scratchpad</h2>
+            <h2 class="text-2xl font-bold mb-4">Espejo 🪞</h2>
             <div class="flex">
                 <!-- Left side with text area and copy button -->
                 <div class="max-w-[1000px] w-full">
@@ -128,6 +144,14 @@
                         >
                             Download
                         </a>
+
+                        <button
+                            onclick={clearUpload}
+                            class="border border-pink-950 rounded px-4 py-2 w-full
+                        text-center mb-4 inline-block bg-pink-700 hover:bg-pink-800 font-medium"
+                        >
+                            Clear
+                        </button>
                     {/if}
                     <label
                         for="desktop-file-upload"
@@ -148,8 +172,7 @@
     {:else}
         <!-- Mobile Layout -->
         <div class="px-4">
-            <h2 class="text-xl font-bold mb-3">Scratchpad</h2>
-
+            <h2 class="text-2xl font-bold mb-4">Espejo 🪞</h2>
             <div
                 class="border border-white rounded mb-4"
                 style="min-height: 150px;"
@@ -159,6 +182,7 @@
                     placeholder=""
                     value={textContent}
                     oninput={handleTextChange}
+                    rows="12"
                 ></textarea>
             </div>
 
@@ -171,14 +195,24 @@
             </button>
 
             <div class="pt-4 flex flex-col">
-                <p class="mb-3 font-medium">File: xyz.txt</p>
-                <a
-                    href={downloadUrl}
-                    class="border border-blue-950 rounded px-4 py-2 w-full
+                {#if currentUpload}
+                    <p class="mb-3 font-medium">File: {currentUpload}</p>
+                    <a
+                        href={downloadUrl}
+                        class="border border-blue-950 rounded px-4 py-2 w-full
                         text-center mb-4 inline-block bg-blue-600 hover:bg-blue-800 font-medium"
-                >
-                    Download
-                </a>
+                    >
+                        Download
+                    </a>
+
+                    <button
+                        onclick={clearUpload}
+                        class="border border-pink-950 rounded px-4 py-2 w-full
+                        text-center mb-4 inline-block bg-pink-700 hover:bg-pink-800 font-medium"
+                    >
+                        Clear
+                    </button>
+                {/if}
                 <label
                     for="desktop-file-upload"
                     class="border border-indigo-950 rounded px-4 py-2 block

@@ -1,3 +1,4 @@
+const std = @import("std");
 const httpz = @import("httpz");
 const state = @import("state.zig");
 const websocket = httpz.websocket;
@@ -23,17 +24,56 @@ pub const Client = struct {
 
     pub fn afterInit(client: *Client) !void {
         zlog.info("WebSocket client connected", .{});
-        try client.conn.writeText("Hello, from the server!");
+        _ = client;
     }
+
+    const Message = struct {
+        action: []const u8,
+        data: ?[]const u8,
+    };
 
     pub fn clientMessage(self: *Client, data: []const u8) !void {
         const msg = data;
-        // If the data is a string, strip the quotes
-        // if (data[0] == '"' and data[data.len - 1] == '"') {
-        //     msg = data[1 .. data.len - 1];
-        // }
-        zlog.info("WebSocket client message: {s}", .{msg});
-        return self.conn.writeText(msg);
+        var arena = std.heap.ArenaAllocator.init(self.appState.allocator);
+        defer arena.deinit();
+        const allocator = arena.allocator();
+
+        const messageJson = try std.json.parseFromSlice(Message, allocator, msg, .{});
+        const message = messageJson.value;
+        zlog.info("Message: {s}", .{data});
+
+        if (std.mem.eql(u8, message.action, "setClipboard")) {
+            self.appState.allocator.free(self.appState.clipboard);
+            self.appState.clipboard = try self.appState.allocator.dupe(u8, message.data.?);
+            try broadcast(self.appState, msg);
+        }
+
+        if (std.mem.eql(u8, message.action, "clearUpload")) {
+            try state.clearUploadDir(allocator);
+            const response = Message{
+                .action = "clearUpload",
+                .data = null,
+            };
+            const resonse_string = try std.json.stringifyAlloc(allocator, response, .{});
+            try broadcast(
+                self.appState,
+                resonse_string,
+            );
+        }
+
+        if (std.mem.eql(u8, message.action, "uploadFile")) {
+            if (self.appState.current_upload) |cu| {
+                const response = Message{
+                    .action = "uploadFile",
+                    .data = cu.filename,
+                };
+                const response_string = try std.json.stringifyAlloc(allocator, response, .{});
+                try broadcast(self.appState, response_string);
+            } else {
+                zlog.warn("No current upload", .{});
+                return error.NoUpload;
+            }
+        }
     }
 
     pub fn close(self: *Client) void {
@@ -45,3 +85,9 @@ pub const Client = struct {
         }
     }
 };
+
+fn broadcast(appState: *state.State, message: []const u8) !void {
+    for (appState.ws_connections.items) |client| {
+        client.conn.writeText(message) catch {};
+    }
+}

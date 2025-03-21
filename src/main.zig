@@ -16,23 +16,22 @@ pub var state_instance: ?*State = null;
 
 pub fn main() !void {
     if (comptime @import("builtin").os.tag == .windows) {
-        std.debug.print("Windows is not currently supported", .{});
-        return error.PlatformNotSupported;
+        zlog.warn("While this code should work fine on Windows, the signal handler is untested! Use at your own discretion!", .{});
     }
     shutdown.init_sig_handler();
 
     var gpa = std.heap.GeneralPurposeAllocator(.{
         .safety = true,
         .thread_safe = true,
-    }){};
+    }).init;
     const gpa_alloc = gpa.allocator();
     var arena = std.heap.ArenaAllocator.init(gpa_alloc);
     const allocator = arena.allocator();
 
     try zlog.initGlobalLogger(
-        .INFO,
+        .DEBUG,
         true,
-        "scratchpad",
+        "espejo",
         null,
         null,
         allocator,
@@ -40,7 +39,6 @@ pub fn main() !void {
     var appState = State.init(allocator);
     state_instance = &appState;
     try appState.preloadFile("web/dist/index.html", .HTML);
-    try appState.preloadFile("zig-out/bin/wasm.wasm", .WASM);
     try appState.preloadDirectoryRecursive("web/dist/assets");
 
     {
@@ -62,30 +60,23 @@ pub fn main() !void {
 
         var router = try server.router(.{});
         router.get("/", index, .{});
-        router.get("/wasm", wasm, .{});
+        // router.get("/wasm", wasm, .{});
         router.get("/assets/:file", assets, .{});
         router.get("/getUpload", getUpload, .{});
         router.get("/download/:file", downloadFile, .{});
         router.post("/upload", uploadFile, .{});
         router.get("/clearUpload", clearUpload, .{});
         router.get("/ws", wsFn, .{});
-        router.get("/broadcast", broadcast, .{});
+        router.get("/getContent", getContent, .{});
 
         server_instance = &server;
-        zlog.info("Tearing off a scratchpad @ http://localhost:3000", .{});
+        zlog.info("Colocación un espejo en http://localhost:3000", .{});
         try server.listen();
     }
     appState.deinit();
     zlog.deinitGlobalLogger();
     arena.deinit();
     _ = gpa.deinit();
-}
-
-fn broadcast(appState: *State, _: *httpz.Request, res: *httpz.Response) !void {
-    for (appState.ws_connections.items) |client| {
-        client.conn.write("BROADCASTING MESSAGE") catch {};
-    }
-    try res.json(.{ .status = "success" }, .{});
 }
 
 fn index(appState: *State, _: *httpz.Request, res: *httpz.Response) !void {
@@ -97,7 +88,7 @@ fn index(appState: *State, _: *httpz.Request, res: *httpz.Response) !void {
 }
 
 fn wasm(appState: *State, _: *httpz.Request, res: *httpz.Response) !void {
-    const cached_file = try appState.getOrLoadFile("zig-out/bin/wasm.wasm", .HTML);
+    const cached_file = try appState.getOrLoadFile("zig-out/bin/wasm.wasm", .WASM);
     res.header("Content-Encoding", "gzip");
     res.content_type = cached_file.content_type;
     res.body = if (cached_file.compressed_data) |compressed_data| compressed_data else cached_file.data;
@@ -187,7 +178,7 @@ fn uploadFile(appState: *State, req: *httpz.Request, res: *httpz.Response) !void
     }
 
     if (file_data) |fdata| {
-        try clearUploadDir(res.arena);
+        try state.clearUploadDir(res.arena);
         // Write the data to the metadata file and write the contents to the file.
         const owned_file_name = appState.allocator.dupe(u8, file_name.?) catch return redirect(res);
         const filepath = try std.fmt.allocPrint(res.arena, "upload/{s}", .{owned_file_name});
@@ -220,22 +211,15 @@ fn uploadFile(appState: *State, req: *httpz.Request, res: *httpz.Response) !void
     }
 }
 
-fn clearUploadDir(allocator: std.mem.Allocator) !void {
-    const cwd = std.fs.cwd();
-    const upload = try cwd.openDir("upload", .{
-        .iterate = true,
-    });
-    var walker = try upload.walk(allocator);
-    while (try walker.next()) |entry| {
-        try upload.deleteFile(entry.path);
-    }
+fn getContent(appState: *State, _: *httpz.Request, res: *httpz.Response) !void {
+    res.body = appState.clipboard;
 }
 
 fn clearUpload(appState: *State, _: *httpz.Request, res: *httpz.Response) !void {
     if (appState.current_upload) |cu| {
 
         // Remove the files
-        try clearUploadDir(res.arena);
+        try state.clearUploadDir(res.arena);
 
         cu.deinit(appState.allocator);
         appState.current_upload = null;
