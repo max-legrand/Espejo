@@ -48,7 +48,5 @@ If you are hosting the application so that it is accessible from the internet yo
 - `SP_PROD`: This should be set to the URL which you are hosting the application on, so that authentication cookies can be properly applied to the domain.
 
 # Demo
-<details>
-<summary>Demo video</summary>
-https://github.com/user-attachments/assets/806323dc-a75a-4ac2-a473-b6dc644b979c
-</details>
+https://github.com/user-attachments/assets/4b0d3b3f-ee95-4810-8cf7-ffc2661c987c
+
