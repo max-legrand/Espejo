@@ -10,7 +10,7 @@
  # Copy files into the container
  COPY prod/dist/espejo /app/zig-out/bin/espejo
  # COPY prod/dist/wasm.wasm /app/zig-out/bin/wasm.wasm
- COPY static/ /app/static/
+ # COPY static/ /app/static/
  COPY web/dist/ /app/web/dist/
 
  # Upload is a mounted volume
